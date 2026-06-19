@@ -1,0 +1,54 @@
+name: Server — Linux Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/server-linux.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build & publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: server
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+        working-directory: server
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build --verbosity normal
+        working-directory: server
+
+      - name: Publish (self-contained, linux-x64)
+        run: |
+          dotnet publish src/HierMic.Server/HierMic.Server.csproj \
+            --configuration Release \
+            --runtime linux-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=true \
+            --output ./publish/linux-x64
+        working-directory: server
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hiermic-server-linux-x64
+          path: server/publish/linux-x64/HierMic.Server
+          retention-days: 30

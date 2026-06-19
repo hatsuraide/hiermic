@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HierMic.Protocol/HierMic.Protocol.csproj" />
+    <Project Path="src/HierMic.Server/HierMic.Server.csproj" />
+  </Folder>
+</Solution>

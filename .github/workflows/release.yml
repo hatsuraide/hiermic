@@ -1,0 +1,197 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+
+  # Server
+  server-linux:
+    name: Server - linux-x64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish self-contained binary
+        run: |
+          dotnet publish src/HierMic.Server/HierMic.Server.csproj \
+            --configuration Release \
+            --runtime linux-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:PublishTrimmed=true \
+            --output ./publish
+        working-directory: server
+
+      - name: Rename to hiermic
+        run: mv server/publish/HierMic.Server hiermic
+
+      - name: Upload to release
+        run: gh release upload "${{ github.event.release.tag_name }}" hiermic --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # iOS
+  ios-ipa:
+    name: iOS — unsigned .ipa
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Generate platform files
+        run: flutter create . --project-name hiermic_app --org com.hiermic --platforms ios,android
+        working-directory: mobile/hiermic_app
+
+      - name: Patch Info.plist
+        run: |
+          plist=mobile/hiermic_app/ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSMicrophoneUsageDescription string 'HierMic streams your microphone over WiFi to your PC.'" \
+            "$plist" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c \
+            "Set :NSMicrophoneUsageDescription 'HierMic streams your microphone over WiFi to your PC.'" \
+            "$plist"
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSLocalNetworkUsageDescription string 'HierMic needs local network access to discover and connect to HierMic Server.'" \
+            "$plist" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c \
+            "Set :NSLocalNetworkUsageDescription 'HierMic needs local network access to discover and connect to HierMic Server.'" \
+            "$plist"
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices array" "$plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSBonjourServices:0 string _hiermic._tcp" "$plist" 2>/dev/null || true
+
+      - name: flutter pub get
+        run: flutter pub get
+        working-directory: mobile/hiermic_app
+
+      - name: Patch project.pbxproj — disable signing
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('mobile/hiermic_app/ios/Runner.xcodeproj/project.pbxproj')
+          t = p.read_text()
+          t = re.sub(r'ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;', t)
+          t = re.sub(r'CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;', t)
+          t = re.sub(r'CODE_SIGN_IDENTITY = "[^"]*";', 'CODE_SIGN_IDENTITY = "";', t)
+          t = re.sub(r'DEVELOPMENT_TEAM = \w*;', 'DEVELOPMENT_TEAM = "";', t)
+          p.write_text(t)
+          EOF
+
+      - name: Patch Podfile — inject signing disable
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('mobile/hiermic_app/ios/Podfile')
+          t = p.read_text()
+          patch = (
+            "  installer.pods_project.targets.each do |target|\n"
+            "    target.build_configurations.each do |config|\n"
+            "      config.build_settings['CODE_SIGNING_ALLOWED']  = 'NO'\n"
+            "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+            "      config.build_settings['CODE_SIGN_IDENTITY']    = ''\n"
+            "      config.build_settings['DEVELOPMENT_TEAM']      = ''\n"
+            "    end\n"
+            "  end\n"
+          )
+          t = re.sub(r'(post_install do \|installer\|\n)', lambda m: m.group(1) + patch, t, count=1)
+          p.write_text(t)
+          EOF
+
+      - name: Pod install
+        run: pod install
+        working-directory: mobile/hiermic_app/ios
+
+      - name: Build with xcodebuild (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$GITHUB_WORKSPACE/mobile/hiermic_app/build/DerivedData" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$GITHUB_WORKSPACE/xcodebuild.log"
+        working-directory: mobile/hiermic_app/ios
+
+      - name: Upload xcodebuild log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7
+
+      - name: Package .ipa
+        run: |
+          APP=$(find build/DerivedData -name "Runner.app" -path "*/Release-iphoneos/*" | head -1)
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -r HierMic-unsigned.ipa Payload/
+          rm -rf Payload
+        working-directory: mobile/hiermic_app
+
+      - name: Upload to release
+        run: gh release upload "${{ github.event.release.tag_name }}" mobile/hiermic_app/HierMic-unsigned.ipa --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Android
+  android-apk:
+    name: Android — release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Generate platform files
+        run: flutter create . --project-name hiermic_app --org com.hiermic --platforms ios,android
+        working-directory: mobile/hiermic_app
+
+      - name: flutter pub get
+        run: flutter pub get
+        working-directory: mobile/hiermic_app
+
+      - name: Build release APK
+        run: flutter build apk --release
+        working-directory: mobile/hiermic_app
+
+      - name: Rename APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk HierMic.apk
+        working-directory: mobile/hiermic_app
+
+      - name: Upload to release
+        run: gh release upload "${{ github.event.release.tag_name }}" mobile/hiermic_app/HierMic.apk --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

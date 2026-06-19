@@ -1,0 +1,54 @@
+name: Mobile — Android Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-build.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Generate platform files
+        run: flutter create . --project-name hiermic_app --org com.hiermic --platforms ios,android
+        working-directory: mobile/hiermic_app
+
+      - name: flutter pub get
+        run: flutter pub get
+        working-directory: mobile/hiermic_app
+
+      - name: Build release APK
+        run: flutter build apk --release
+        working-directory: mobile/hiermic_app
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HierMic-android
+          path: mobile/hiermic_app/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30

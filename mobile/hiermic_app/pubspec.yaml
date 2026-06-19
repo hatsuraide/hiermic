@@ -1,0 +1,30 @@
+name: hiermic_app
+description: HierMic — WiFi microphone client for HierMic Server
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Audio recording with PCM streaming — single non-federated package,
+  # no cross-package version drift (unlike record's federated plugin setup)
+  flutter_sound: ^9.14.0
+
+  # mDNS service discovery
+  multicast_dns: ^0.3.2
+
+  # Microphone & network permission handling
+  permission_handler: ^11.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

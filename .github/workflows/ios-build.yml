@@ -1,0 +1,182 @@
+name: Mobile — iOS Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/ios-build.yml'
+  pull_request:
+    paths:
+      - 'mobile/**'
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build unsigned .ipa
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Generate platform files (ios/ android/)
+        run: flutter create . --project-name hiermic_app --org com.hiermic --platforms ios,android
+        working-directory: mobile/hiermic_app
+
+      # Inject NSMicrophoneUsageDescription — required for App Store & sideloading
+      - name: Patch iOS Info.plist
+        run: |
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSMicrophoneUsageDescription string 'HierMic streams your microphone over WiFi to your PC.'" \
+            mobile/hiermic_app/ios/Runner/Info.plist || \
+          /usr/libexec/PlistBuddy -c \
+            "Set :NSMicrophoneUsageDescription 'HierMic streams your microphone over WiFi to your PC.'" \
+            mobile/hiermic_app/ios/Runner/Info.plist
+
+      # Add local network usage description (needed for mDNS on iOS 14+)
+      - name: Patch iOS local network usage
+        run: |
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSLocalNetworkUsageDescription string 'HierMic needs local network access to discover and connect to HierMic Server.'" \
+            mobile/hiermic_app/ios/Runner/Info.plist || \
+          /usr/libexec/PlistBuddy -c \
+            "Set :NSLocalNetworkUsageDescription 'HierMic needs local network access to discover and connect to HierMic Server.'" \
+            mobile/hiermic_app/ios/Runner/Info.plist
+
+      # Bonjour services declaration required for mDNS browsing
+      - name: Add Bonjour services to Info.plist
+        run: |
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSBonjourServices array" \
+            mobile/hiermic_app/ios/Runner/Info.plist 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c \
+            "Add :NSBonjourServices:0 string _hiermic._tcp" \
+            mobile/hiermic_app/ios/Runner/Info.plist 2>/dev/null || true
+
+      - name: flutter pub get
+        run: flutter pub get
+        working-directory: mobile/hiermic_app
+
+      # Disable signing on the Runner Xcode target (Automatic → Manual, empty team/identity).
+      - name: Patch Runner project.pbxproj — disable signing
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('mobile/hiermic_app/ios/Runner.xcodeproj/project.pbxproj')
+          t = p.read_text()
+          t = re.sub(r'ProvisioningStyle = Automatic;', 'ProvisioningStyle = Manual;', t)
+          t = re.sub(r'CODE_SIGN_STYLE = Automatic;', 'CODE_SIGN_STYLE = Manual;', t)
+          t = re.sub(r'CODE_SIGN_IDENTITY = "[^"]*";', 'CODE_SIGN_IDENTITY = "";', t)
+          t = re.sub(r'DEVELOPMENT_TEAM = \w*;', 'DEVELOPMENT_TEAM = "";', t)
+          p.write_text(t)
+          print("Patched project.pbxproj")
+          EOF
+
+      # CocoaPods 1.16+ rejects multiple post_install blocks, so we inject
+      # the signing disable into the single existing block that Flutter generates.
+      - name: Patch Podfile — inject signing disable into existing post_install
+        run: |
+          python3 - <<'EOF'
+          import re, pathlib
+          p = pathlib.Path('mobile/hiermic_app/ios/Podfile')
+          t = p.read_text()
+          patch = (
+            "  installer.pods_project.targets.each do |target|\n"
+            "    target.build_configurations.each do |config|\n"
+            "      config.build_settings['CODE_SIGNING_ALLOWED']  = 'NO'\n"
+            "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+            "      config.build_settings['CODE_SIGN_IDENTITY']    = ''\n"
+            "      config.build_settings['DEVELOPMENT_TEAM']      = ''\n"
+            "    end\n"
+            "  end\n"
+          )
+          # Insert at the top of the existing post_install block
+          t = re.sub(
+            r'(post_install do \|installer\|\n)',
+            lambda m: m.group(1) + patch,
+            t,
+            count=1
+          )
+          p.write_text(t)
+          print("Patched Podfile")
+          EOF
+
+      # Run pod install ourselves so our Podfile patch is applied before xcodebuild.
+      # flutter build ios would also run pod install, but we lose control that way.
+      - name: Pod install
+        run: pod install
+        working-directory: mobile/hiermic_app/ios
+
+      # Call xcodebuild directly — Flutter's `build ios` wrapper validates the
+      # project config itself and throws the "Development Team required" error
+      # before xcodebuild even runs. Going direct bypasses that.
+      # Flutter's Dart build phase (xcode_backend.sh) still fires as a normal
+      # Xcode Run Script because FLUTTER_ROOT is in the environment.
+      - name: Build iOS with xcodebuild (no signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -sdk iphoneos \
+            -configuration Release \
+            -derivedDataPath "$GITHUB_WORKSPACE/mobile/hiermic_app/build/DerivedData" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$GITHUB_WORKSPACE/xcodebuild.log"
+        working-directory: mobile/hiermic_app/ios
+
+      - name: Upload xcodebuild log (always, for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7
+
+      - name: Package .ipa for sideloading
+        run: |
+          APP=$(find build/DerivedData -name "Runner.app" -path "*/Release-iphoneos/*" | head -1)
+          echo "Found app: $APP"
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          zip -r HierMic-unsigned.ipa Payload/
+          rm -rf Payload
+        working-directory: mobile/hiermic_app
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HierMic-unsigned-ipa
+          path: mobile/hiermic_app/HierMic-unsigned.ipa
+          retention-days: 30
+
+  # Placeholder job — enable when you have an Apple Developer account
+  # build-ios-signed:
+  #   name: Build signed .ipa (TestFlight)
+  #   runs-on: macos-latest
+  #   environment: apple-signing
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: Apple-Actions/import-codesign-certs@v3
+  #       with:
+  #         p12-file-base64: ${{ secrets.APPLE_CERT_P12 }}
+  #         p12-password: ${{ secrets.APPLE_CERT_P12_PASSWORD }}
+  #     - uses: Apple-Actions/download-provisioning-profiles@v3
+  #       with:
+  #         bundle-id: com.hiermic.app
+  #         issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+  #         api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+  #         api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+  #     ... (flutter build ios --release + xcrun altool upload)
