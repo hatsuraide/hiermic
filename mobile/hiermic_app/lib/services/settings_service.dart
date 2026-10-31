@@ -1,42 +1,70 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/server_info.dart';
+import '../models/server_config.dart';
 import 'constants.dart';
 
-class SavedServer {
-  final String name;
-  final String address;
-  final int port;
-
-  const SavedServer({
-    required this.name,
-    required this.address,
-    required this.port,
-  });
-}
-
-/// Persists the last successfully used server so the app can pre-fill the
-/// address on the next launch.
+/// Persists the list of saved servers.
 class SettingsService {
-  static const _keyName    = 'last_server_name';
-  static const _keyAddress = 'last_server_address';
-  static const _keyPort    = 'last_server_port';
+  static const _keyConfigs = 'server_configs';
 
-  Future<SavedServer?> loadLastServer() async {
+  // Legacy single-server keys (written by older app versions).
+  static const _legacyKeyName    = 'last_server_name';
+  static const _legacyKeyAddress = 'last_server_address';
+  static const _legacyKeyPort    = 'last_server_port';
+
+  Future<List<ServerConfig>> loadServerConfigs() async {
     final prefs = await SharedPreferences.getInstance();
-    final address = prefs.getString(_keyAddress);
-    if (address == null || address.isEmpty) return null;
+    final configs = _decode(prefs.getString(_keyConfigs));
 
-    return SavedServer(
-      name:    prefs.getString(_keyName) ?? address,
-      address: address,
-      port:    prefs.getInt(_keyPort) ?? Constants.controlPort,
+    if (configs.isNotEmpty) return configs;
+
+    // Migrate a previously saved single server into the new list.
+    final legacy = _loadLegacyServer(prefs);
+    if (legacy == null) return [];
+
+    final migrated = [legacy];
+    await saveServerConfigs(migrated);
+    await prefs.remove(_legacyKeyName);
+    await prefs.remove(_legacyKeyAddress);
+    await prefs.remove(_legacyKeyPort);
+    return migrated;
+  }
+
+  Future<void> saveServerConfigs(List<ServerConfig> configs) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _keyConfigs,
+      jsonEncode(configs.map((c) => c.toJson()).toList()),
     );
   }
 
-  Future<void> saveLastServer(ServerInfo server) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyName, server.name);
-    await prefs.setString(_keyAddress, server.address.address);
-    await prefs.setInt(_keyPort, server.port);
+  static List<ServerConfig> _decode(String? raw) {
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return [];
+      return decoded
+          .whereType<Map>()
+          .map((json) => ServerConfig.tryFromJson(Map<String, dynamic>.from(json)))
+          .whereType<ServerConfig>()
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static ServerConfig? _loadLegacyServer(SharedPreferences prefs) {
+    final address = prefs.getString(_legacyKeyAddress);
+    if (address == null || address.isEmpty) return null;
+
+    final parsed = InternetAddress.tryParse(address);
+    if (parsed == null) return null;
+
+    return ServerConfig(
+      name: prefs.getString(_legacyKeyName) ?? parsed.address,
+      host: parsed.address,
+      port: prefs.getInt(_legacyKeyPort) ?? Constants.controlPort,
+    );
   }
 }

@@ -12,10 +12,20 @@ class AudioService {
   RawDatagramSocket? _socket;
   int _seq = 0;
   final _buf = BytesBuilder(copy: false);
+  final _targets = <ServerInfo>[];
 
   bool get isStreaming => _recorder.isRecording;
 
-  Future<void> startStreaming(ServerInfo server) async {
+  /// Adds or removes destinations while streaming is active.
+  void setTargets(Iterable<ServerInfo> servers) {
+    _targets
+      ..clear()
+      ..addAll(servers);
+  }
+
+  Future<void> startStreaming(Iterable<ServerInfo> servers) async {
+    if (_socket != null) return;
+    setTargets(servers);
     _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     await _recorder.openRecorder();
 
@@ -32,7 +42,10 @@ class AudioService {
           _buf.add(all.sublist(Constants.bytesPerPacket));
         }
         // Audio UDP port is always controlPort + 1 (matches server convention).
-        _socket?.send(_buildPacket(_seq++, pcm), server.address, server.port + 1);
+        final packet = _buildPacket(_seq++, pcm);
+        for (final target in List<ServerInfo>.of(_targets)) {
+          _socket?.send(packet, target.address, target.port + 1);
+        }
       }
     });
 
@@ -45,6 +58,8 @@ class AudioService {
   }
 
   Future<void> stopStreaming() async {
+    if (_socket == null && !_recorder.isRecording) return;
+
     await _recorder.stopRecorder();
     await _sub?.cancel();
     _sub = null;
@@ -53,6 +68,7 @@ class AudioService {
     _socket?.close();
     _socket = null;
     _buf.clear();
+    _targets.clear();
     await _recorder.closeRecorder();
   }
 

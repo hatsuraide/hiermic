@@ -14,7 +14,7 @@ class ControlService {
 
   ConnectionState state = ConnectionState.disconnected;
   MessageCallback? onMessage;
-  VoidCallback? onDisconnected;
+  void Function()? onDisconnected;
 
   Future<void> connect(ServerInfo server) async {
     state   = ConnectionState.connecting;
@@ -49,8 +49,13 @@ class ControlService {
   void sendStop()  => _send({'type': 'Stop'});
 
   void _send(Map<String, dynamic> msg) {
-    if (_socket == null) return;
-    _socket!.writeln(jsonEncode(msg));
+    final socket = _socket;
+    if (socket == null) return;
+    try {
+      socket.writeln(jsonEncode(msg));
+    } catch (_) {
+      // Socket already gone; the read stream reports the disconnect.
+    }
   }
 
   void _handleMessage(Map<String, dynamic> msg) {
@@ -69,11 +74,14 @@ class ControlService {
 
   Future<void> disconnect() async {
     sendStop();
-    await _sub?.cancel();
-    await _socket?.close();
+    try {
+      await _sub?.cancel();
+    } catch (_) {}
+    try {
+      await _socket?.close();
+    } catch (_) {}
+    _sub    = null;
     _socket = null;
     state   = ConnectionState.disconnected;
   }
 }
-
-typedef VoidCallback = void Function();
