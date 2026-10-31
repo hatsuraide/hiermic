@@ -2,7 +2,7 @@ namespace HierMic.Protocol;
 
 public static class Constants
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
 
     public const int ControlPort = 7878;
     public const int AudioPort   = 7879;

@@ -1,5 +1,5 @@
 class Constants {
-  static const String appVersion = '1.0.0';
+  static const String appVersion = '1.1.0';
 
   static const int controlPort = 7878;
   static const int audioPort   = 7879;
