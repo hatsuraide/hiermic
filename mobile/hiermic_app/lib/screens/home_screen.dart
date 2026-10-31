@@ -6,6 +6,7 @@ import '../services/audio_service.dart';
 import '../services/constants.dart';
 import '../services/control_service.dart';
 import '../services/discovery_service.dart';
+import '../services/settings_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -18,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _discovery = DiscoveryService();
   final _audio     = AudioService();
   final _control   = ControlService();
+  final _settings  = SettingsService();
 
   List<ServerInfo> _servers = [];
   ServerInfo?      _connected;
@@ -32,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _requestPermissions();
     _startDiscovery();
+    _loadLastServer();
 
     _control.onDisconnected = () => setState(() {
       _connected  = null;
@@ -52,6 +55,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _loadLastServer() async {
+    try {
+      final saved = await _settings.loadLastServer();
+      if (saved == null || !mounted) return;
+      setState(() {
+        if (_manualIpCtrl.text.isEmpty) _manualIpCtrl.text = saved.address;
+        if (_manualPortCtrl.text == '${Constants.controlPort}') {
+          _manualPortCtrl.text = '${saved.port}';
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to load saved server: $e');
+    }
+  }
+
   Future<void> _connect(ServerInfo server) async {
     setState(() => _status = 'Connecting to ${server.name}...');
     try {
@@ -60,6 +78,11 @@ class _HomeScreenState extends State<HomeScreen> {
         _connected = server;
         _status    = 'Connected to ${server.name}';
       });
+      try {
+        await _settings.saveLastServer(server);
+      } catch (e) {
+        debugPrint('Failed to save last server: $e');
+      }
     } catch (e) {
       setState(() => _status = 'Connection failed: $e');
     }

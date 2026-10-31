@@ -20,7 +20,7 @@ class ControlService {
     state   = ConnectionState.connecting;
     _socket = await Socket.connect(
       server.address,
-      Constants.controlPort,
+      server.port,
       timeout: const Duration(seconds: 5),
     );
 

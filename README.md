@@ -85,7 +85,7 @@ For iOS, use the [GitHub Actions workflow](.github/workflows/ios-build.yml) sinc
 1. Start the server (or have it running via systemd)
 2. Open the HierMic app on your phone
 3. The server appears automatically via mDNS, tap it to connect
-4. If auto-discovery doesn't work, enter the server IP manually (`192.168.x.x`)
+4. If auto-discovery doesn't work, enter the server IP manually (`192.168.x.x`) — the last successfully used address is remembered and pre-filled next time
 5. Tap the mic button to start streaming
 6. Select **hiermic** as your microphone source in OBS, Discord, etc.
 
