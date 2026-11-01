@@ -167,6 +167,26 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _connectDiscovered(ServerInfo server) =>
       _connect(_configForServer(server)?.toServerInfo() ?? server);
 
+  /// Disconnects an active session. Returns false when there is nothing to
+  /// disconnect (no session, or a failed one that should be retried instead).
+  bool _disconnectIfActive(String id) {
+    final session = _sessions[id];
+    if (session == null || session.phase == _SessionPhase.error) return false;
+
+    unawaited(_disconnectSession(session.id));
+    return true;
+  }
+
+  void _toggleConfig(ServerConfig config) {
+    if (_disconnectIfActive(config.id)) return;
+    unawaited(_connectConfig(config));
+  }
+
+  void _toggleDiscovered(ServerInfo server) {
+    if (_disconnectIfActive(_keyFor(server))) return;
+    unawaited(_connectDiscovered(server));
+  }
+
   void _onSessionClosed(String key) {
     final session = _sessions[key];
     if (session == null || !mounted) return;
@@ -371,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
               (config) => _SavedServerTile(
                 config: config,
                 session: _sessions[config.id],
-                onConnect: () => _connectConfig(config),
+                onTap: () => _toggleConfig(config),
                 onDisconnect: () => _disconnectSession(config.id),
                 onEdit: () => _editConfig(config),
                 onDelete: () => _deleteConfig(config),
@@ -390,7 +410,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 server: server,
                 saved: _configForServer(server) != null,
                 session: session,
-                onConnect: () => _connectDiscovered(server),
+                onTap: () => _toggleDiscovered(server),
                 onSave: () => _saveDiscovered(server),
               );
             }),
@@ -569,7 +589,7 @@ class _ServerTile extends StatelessWidget {
 class _SavedServerTile extends StatelessWidget {
   final ServerConfig config;
   final _ServerSession? session;
-  final VoidCallback onConnect;
+  final VoidCallback onTap;
   final VoidCallback onDisconnect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -577,7 +597,7 @@ class _SavedServerTile extends StatelessWidget {
   const _SavedServerTile({
     required this.config,
     required this.session,
-    required this.onConnect,
+    required this.onTap,
     required this.onDisconnect,
     required this.onEdit,
     required this.onDelete,
@@ -598,7 +618,7 @@ class _SavedServerTile extends StatelessWidget {
       title: config.name,
       subtitle: _subtitle(phase),
       subtitleColor: _subtitleColor(phase),
-      onTap: onConnect,
+      onTap: onTap,
       actions: [
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert, color: Colors.grey),
@@ -671,14 +691,14 @@ class _DiscoveredServerTile extends StatelessWidget {
   final ServerInfo server;
   final bool saved;
   final _ServerSession? session;
-  final VoidCallback onConnect;
+  final VoidCallback onTap;
   final VoidCallback onSave;
 
   const _DiscoveredServerTile({
     required this.server,
     required this.saved,
     required this.session,
-    required this.onConnect,
+    required this.onTap,
     required this.onSave,
   });
 
@@ -706,7 +726,7 @@ class _DiscoveredServerTile extends StatelessWidget {
           ? '${server.displayAddress} · Saved'
           : server.displayAddress,
       subtitleColor: Colors.grey,
-      onTap: onConnect,
+      onTap: onTap,
       actions: [
         IconButton(
           tooltip: saved ? 'Already saved' : 'Save server',
