@@ -350,7 +350,6 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             _StreamButton(
               streaming: _streaming,
-              count: connectedCount,
               onTap: _toggleStreaming,
             ),
           ],
@@ -392,7 +391,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 saved: _configForServer(server) != null,
                 session: session,
                 onConnect: () => _connectDiscovered(server),
-                onDisconnect: () => _disconnectSession(session!.id),
                 onSave: () => _saveDiscovered(server),
               );
             }),
@@ -493,6 +491,81 @@ class _HintCard extends StatelessWidget {
   }
 }
 
+class _ServerTile extends StatelessWidget {
+  final Widget leading;
+  final String title;
+  final String subtitle;
+  final Color subtitleColor;
+  final VoidCallback onTap;
+  final List<Widget> actions;
+
+  const _ServerTile({
+    required this.leading,
+    required this.title,
+    required this.subtitle,
+    required this.subtitleColor,
+    required this.onTap,
+    this.actions = const [],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(10),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: [
+            // Only the entry itself is tappable; the action strip is not.
+            Expanded(
+              child: InkWell(
+                onTap: onTap,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                  child: Row(
+                    children: [
+                      leading,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: subtitleColor,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            ...actions,
+            const SizedBox(width: 4),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SavedServerTile extends StatelessWidget {
   final ServerConfig config;
   final _ServerSession? session;
@@ -514,68 +587,44 @@ class _SavedServerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final phase = session?.phase;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: ListTile(
-        leading: _phaseIcon(phase),
-        title: Text(config.name, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(
-          _subtitle(phase),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: _subtitleColor(phase)),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (phase == _SessionPhase.connecting)
-              const SizedBox(
-                width: 48,
-                height: 48,
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+    return _ServerTile(
+      leading: phase == _SessionPhase.connecting
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : _phaseIcon(phase),
+      title: config.name,
+      subtitle: _subtitle(phase),
+      subtitleColor: _subtitleColor(phase),
+      onTap: onConnect,
+      actions: [
+        PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert, color: Colors.grey),
+          onSelected: (value) {
+            switch (value) {
+              case 'disconnect':
+                onDisconnect();
+              case 'edit':
+                onEdit();
+              case 'delete':
+                onDelete();
+            }
+          },
+          itemBuilder: (_) => [
+            if (session != null)
+              PopupMenuItem(
+                value: 'disconnect',
+                child: Text(
+                  phase == _SessionPhase.connecting ? 'Cancel' : 'Disconnect',
                 ),
-              )
-            else if (phase == _SessionPhase.connected)
-              IconButton(
-                tooltip: 'Disconnect',
-                icon: const Icon(Icons.link_off, color: Colors.greenAccent),
-                onPressed: onDisconnect,
-              )
-            else
-              IconButton(
-                tooltip: phase == _SessionPhase.error ? 'Retry' : 'Connect',
-                icon: Icon(
-                  phase == _SessionPhase.error ? Icons.refresh : Icons.link,
-                  color: Colors.blueAccent,
-                ),
-                onPressed: onConnect,
               ),
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, color: Colors.grey),
-              onSelected: (value) {
-                if (value == 'edit') {
-                  onEdit();
-                } else if (value == 'delete') {
-                  onDelete();
-                }
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'edit', child: Text('Edit')),
-                PopupMenuItem(value: 'delete', child: Text('Delete')),
-              ],
-            ),
+            const PopupMenuItem(value: 'edit', child: Text('Edit')),
+            const PopupMenuItem(value: 'delete', child: Text('Delete')),
           ],
         ),
-      ),
+      ],
     );
   }
 
@@ -623,7 +672,6 @@ class _DiscoveredServerTile extends StatelessWidget {
   final bool saved;
   final _ServerSession? session;
   final VoidCallback onConnect;
-  final VoidCallback onDisconnect;
   final VoidCallback onSave;
 
   const _DiscoveredServerTile({
@@ -631,7 +679,6 @@ class _DiscoveredServerTile extends StatelessWidget {
     required this.saved,
     required this.session,
     required this.onConnect,
-    required this.onDisconnect,
     required this.onSave,
   });
 
@@ -639,86 +686,52 @@ class _DiscoveredServerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final phase = session?.phase;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: ListTile(
-        leading: Icon(
-          phase == _SessionPhase.connected
-              ? Icons.check_circle
-              : Icons.computer,
-          color: phase == _SessionPhase.connected
-              ? Colors.greenAccent
-              : Colors.blueAccent,
-        ),
-        title: Text(server.name, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(
-          saved
-              ? '${server.displayAddress} · Saved'
-              : server.displayAddress,
-          style: const TextStyle(color: Colors.grey),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: saved ? 'Already saved' : 'Save server',
-              icon: Icon(
-                saved ? Icons.bookmark : Icons.bookmark_add_outlined,
-                color: saved ? Colors.greenAccent : Colors.grey,
-              ),
-              onPressed: saved ? null : onSave,
+    return _ServerTile(
+      leading: phase == _SessionPhase.connecting
+          ? const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : Icon(
+              phase == _SessionPhase.connected
+                  ? Icons.check_circle
+                  : Icons.computer,
+              color: phase == _SessionPhase.connected
+                  ? Colors.greenAccent
+                  : Colors.blueAccent,
             ),
-            if (phase == _SessionPhase.connecting)
-              const SizedBox(
-                width: 48,
-                height: 48,
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              )
-            else if (phase == _SessionPhase.connected)
-              IconButton(
-                tooltip: 'Disconnect',
-                icon: const Icon(Icons.link_off, color: Colors.greenAccent),
-                onPressed: onDisconnect,
-              )
-            else
-              IconButton(
-                tooltip: 'Connect',
-                icon: const Icon(Icons.link, color: Colors.blueAccent),
-                onPressed: onConnect,
-              ),
-          ],
+      title: server.name,
+      subtitle: saved
+          ? '${server.displayAddress} · Saved'
+          : server.displayAddress,
+      subtitleColor: Colors.grey,
+      onTap: onConnect,
+      actions: [
+        IconButton(
+          tooltip: saved ? 'Already saved' : 'Save server',
+          icon: Icon(
+            saved ? Icons.bookmark : Icons.bookmark_add_outlined,
+            color: saved ? Colors.greenAccent : Colors.grey,
+          ),
+          onPressed: saved ? null : onSave,
         ),
-        onTap: onConnect,
-      ),
+      ],
     );
   }
 }
 
 class _StreamButton extends StatelessWidget {
   final bool streaming;
-  final int count;
   final VoidCallback onTap;
   const _StreamButton({
     required this.streaming,
-    required this.count,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final label = streaming
-        ? 'TAP TO STOP'
-        : 'TAP TO STREAM${count > 1 ? ' ($count)' : ''}';
+    final label = streaming ? 'TAP TO STOP' : 'TAP TO STREAM';
 
     return GestureDetector(
       onTap: onTap,
